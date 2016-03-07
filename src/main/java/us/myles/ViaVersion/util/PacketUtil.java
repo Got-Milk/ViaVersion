@@ -10,21 +10,13 @@ import io.netty.handler.codec.ByteToMessageDecoder;
 import io.netty.handler.codec.MessageToByteEncoder;
 import org.spacehq.opennbt.NBTIO;
 import org.spacehq.opennbt.tag.builtin.CompoundTag;
-import us.myles.ViaVersion.chunks.MagicBitSet;
-import us.myles.ViaVersion.chunks.PacketChunk;
-import us.myles.ViaVersion.chunks.PacketChunkData;
 
-import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
-import java.nio.ShortBuffer;
 import java.util.ArrayList;
-import java.util.BitSet;
 import java.util.List;
 import java.util.UUID;
 
@@ -56,7 +48,13 @@ public class PacketUtil {
             return null;
         } else {
             input.readerIndex(readerIndex);
-            return (CompoundTag) NBTIO.readTag(new DataInputStream(new ByteBufInputStream(input)));
+            ByteBufInputStream bytebufStream = new ByteBufInputStream(input);
+            DataInputStream dataInputStream = new DataInputStream(bytebufStream);
+            try {
+                return (CompoundTag) NBTIO.readTag(dataInputStream);
+            } finally {
+                dataInputStream.close();
+            }
         }
     }
 
@@ -64,17 +62,20 @@ public class PacketUtil {
         if (tag == null) {
             output.writeByte(0);
         } else {
-            NBTIO.writeTag(new DataOutputStream(new ByteBufOutputStream(output)), tag);
+            ByteBufOutputStream bytebufStream = new ByteBufOutputStream(output);
+            DataOutputStream dataOutputStream = new DataOutputStream(bytebufStream);
+
+            NBTIO.writeTag(dataOutputStream, tag);
+
+            dataOutputStream.close();
         }
     }
 
     public static List<Object> callDecode(ByteToMessageDecoder decoder, ChannelHandlerContext ctx, Object input) {
-        List<Object> output = new ArrayList<Object>();
+        List<Object> output = new ArrayList<>();
         try {
             PacketUtil.DECODE_METHOD.invoke(decoder, ctx, input, output);
-        } catch (IllegalAccessException e) {
-            e.printStackTrace();
-        } catch (InvocationTargetException e) {
+        } catch (IllegalAccessException | InvocationTargetException e) {
             e.printStackTrace();
         }
         return output;
@@ -83,9 +84,7 @@ public class PacketUtil {
     public static void callEncode(MessageToByteEncoder encoder, ChannelHandlerContext ctx, Object msg, ByteBuf output) {
         try {
             PacketUtil.ENCODE_METHOD.invoke(encoder, ctx, msg, output);
-        } catch (IllegalAccessException e) {
-            e.printStackTrace();
-        } catch (InvocationTargetException e) {
+        } catch (IllegalAccessException | InvocationTargetException e) {
             e.printStackTrace();
         }
     }
@@ -169,7 +168,7 @@ public class PacketUtil {
 
     public static List<String> readStringArray(ByteBuf buf) {
         int len = readVarInt(buf);
-        List<String> ret = new ArrayList<String>(len);
+        List<String> ret = new ArrayList<>(len);
         for (int i = 0; i < len; i++) {
             ret.add(readString(buf));
         }
@@ -258,8 +257,8 @@ public class PacketUtil {
     }
 
     public static void writeLongs(long[] data, ByteBuf output) {
-        for (int index = 0; index < data.length; index++) {
-            output.writeLong(data[index]);
+        for (long aData : data) {
+            output.writeLong(aData);
         }
     }
 
@@ -270,114 +269,6 @@ public class PacketUtil {
         }
 
         return data;
-    }
-
-    // This method is based on one from here
-    // https://github.com/Steveice10/MCProtocolLib/blob/master/src/main/java/org/spacehq/mc/protocol/util/NetUtil.java
-    public static PacketChunk readChunkData(boolean isFullChunk, int bitmask, byte[] input) {
-        PacketChunkData[] chunks = new PacketChunkData[16];
-        boolean sky = false;
-        int expected = 0;
-        int position = 0;
-        ShortBuffer blockData = ByteBuffer.wrap(input).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer();
-
-        for (int i = 0; i < chunks.length; i++) {
-            if ((bitmask & 1 << i) != 0) {
-                expected += (4096 * 2) + 2048;
-            }
-        }
-        // If there is more data, then there must be skylights :D
-        if (input.length > expected) {
-            sky = true;
-        }
-
-        // Read block data
-        for (int i = 0; i < chunks.length; i++) {
-            if ((bitmask & 1 << i) != 0) {
-                chunks[i] = new PacketChunkData(sky);
-                blockData.position(position / 2);
-                blockData.get(chunks[i].getBlocks(), 0, 4096);
-                position = position + (4096 * 2);
-            } else {
-                chunks[i] = new PacketChunkData(sky);
-            }
-        }
-        // Read blocklight data
-        for (int i = 0; i < chunks.length; i++) {
-            if ((bitmask & 1 << i) != 0) {
-                System.arraycopy(input, position, chunks[i].getBlockLight(), 0, 2048);
-                position = position + 2048;
-            }
-        }
-        // Read skylight data
-        if (sky) {
-            for (int i = 0; i < chunks.length; i++) {
-                if ((bitmask & 1 << i) != 0) {
-                    System.arraycopy(input, position, chunks[i].getSkyLight(), 0, 2048);
-                    position = position + 2048;
-                }
-            }
-        }
-
-        byte[] biomeData = null;
-
-        if (isFullChunk) {
-            // yay im a full chunk meaning i know my biomes, mommy get the camera!
-            biomeData = new byte[256];
-            System.arraycopy(input, position, biomeData, 0, 256);
-        }
-        return new PacketChunk(chunks, biomeData);
-    }
-
-    public static void writeNewChunk(ByteBuf buffer, PacketChunkData chunk) {
-        // Bits Per Block (We use 0, cause we're not gonna write a palette ;) )
-        buffer.writeByte(0);
-        // No Palette nor length :D
-
-        // Data Array Length
-        byte[] blockData = convertBlockArray(chunk.getBlocks());
-        writeVarInt(blockData.length / 8, buffer); // Notchian is divide by 8
-
-        buffer.writeBytes(blockData);
-        // Block Light
-        buffer.writeBytes(chunk.getBlockLight());
-        // If has skylight, write it
-        if (chunk.getSkyLight() != null) {
-            buffer.writeBytes(chunk.getSkyLight());
-        }
-    }
-
-    private static byte[] convertBlockArray(short[] blocks) {
-        //  block ID for the first 9 bits, and the block damage value for the last 4 bits
-        byte[] output = new byte[6664]; // (16 * 16 * 16 * 13) / 8 :) (plus some for padding ...)
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        for (short block : blocks) {
-            int blockID = block >> 4; // (Needs to be to 9 bits)
-            int data = block & 0xF; // 8 bits
-
-        }
-        return null; // todo: finish
-    }
-
-    private static BitSet append(BitSet base, int index, MagicBitSet toAdd) {
-        int length = index;
-        for (int i = 0; i < toAdd.getTrueLength(); i++) {
-            base.set(length + i, toAdd.get(i));
-        }
-        return base;
-    }
-
-    private static MagicBitSet getPaddedBitSet(int value, int bitSize) {
-        MagicBitSet output = new MagicBitSet(bitSize);
-        BitSet temp = BitSet.valueOf(new long[]{value});
-        for (int i = 0; i < bitSize; i++) {
-            output.set(i, false);
-        }
-        int toShift = bitSize - temp.length();
-        for (int i = 0; i < temp.length(); i++) {
-            output.set(toShift + i, temp.get(i));
-        }
-        return output;
     }
 
     public static long[] readBlockPosition(ByteBuf buf) {

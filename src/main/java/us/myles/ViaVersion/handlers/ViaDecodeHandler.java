@@ -11,6 +11,7 @@ import us.myles.ViaVersion.util.PacketUtil;
 import java.util.List;
 
 public class ViaDecodeHandler extends ByteToMessageDecoder {
+
     private final IncomingTransformer incomingTransformer;
     private final ByteToMessageDecoder minecraftDecoder;
     private final ConnectionInfo info;
@@ -31,10 +32,10 @@ public class ViaDecodeHandler extends ByteToMessageDecoder {
                 ByteBuf newPacket = ctx.alloc().buffer();
                 try {
                     incomingTransformer.transform(id, bytebuf, newPacket);
-                    bytebuf.readBytes(bytebuf.readableBytes());
+                    bytebuf.clear();
                     bytebuf = newPacket;
                 } catch (CancelException e) {
-                    bytebuf.readBytes(bytebuf.readableBytes());
+                    bytebuf.clear();
                     throw e;
                 }
             }

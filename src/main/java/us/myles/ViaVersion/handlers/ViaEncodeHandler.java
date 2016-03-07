@@ -5,8 +5,6 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.MessageToByteEncoder;
 import us.myles.ViaVersion.CancelException;
 import us.myles.ViaVersion.ConnectionInfo;
-import us.myles.ViaVersion.ViaVersionPlugin;
-import us.myles.ViaVersion.api.ViaVersion;
 import us.myles.ViaVersion.transformers.OutgoingTransformer;
 import us.myles.ViaVersion.util.PacketUtil;
 import us.myles.ViaVersion.util.ReflectionUtil;
@@ -52,27 +50,14 @@ public class ViaEncodeHandler extends MessageToByteEncoder {
                                 Object chunk = ReflectionUtil.nms("World").getDeclaredMethod("getChunkAt", int.class, int.class).invoke(world, x, z);
                                 Object packet = constructor.newInstance(chunk, true, 65535);
                                 ctx.pipeline().writeAndFlush(packet);
-                            } catch (InstantiationException e) {
-                                e.printStackTrace();
-                            } catch (InvocationTargetException e) {
-                                e.printStackTrace();
-                            } catch (NoSuchMethodException e) {
-                                e.printStackTrace();
-                            } catch (IllegalAccessException e) {
-                                e.printStackTrace();
-                            } catch (ClassNotFoundException e) {
+                            } catch (InstantiationException | InvocationTargetException | ClassNotFoundException | IllegalAccessException | NoSuchMethodException e) {
                                 e.printStackTrace();
                             }
                         }
                     }
                 };
-                // Synced allows timings to work properly.
-//                if (ViaVersion.getInstance().isSyncedChunks()) {
-//                    ((ViaVersionPlugin) ViaVersion.getInstance()).run(chunks, false);
-//                } else {
-                    chunks.run();
-//                }
-                bytebuf.readBytes(bytebuf.readableBytes());
+                chunks.run();
+                bytebuf.clear();
                 throw new CancelException();
             }
             // call minecraft encoder
@@ -89,7 +74,7 @@ public class ViaEncodeHandler extends MessageToByteEncoder {
             try {
                 outgoingTransformer.transform(id, oldPacket, bytebuf);
             } catch (CancelException e) {
-                bytebuf.readBytes(bytebuf.readableBytes());
+                bytebuf.clear();
                 throw e;
             } finally {
                 oldPacket.release();
